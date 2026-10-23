@@ -1,11 +1,9 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-sqlalchemy==2.0.36
+# Runtime dependencies (installed into the container image).
+# Pinned to releases at least two weeks old at the time of upgrade.
+fastapi==0.143.0
+starlette==1.7.0
+uvicorn[standard]==0.54.0
+sqlalchemy==2.0.54
 PyJWT==2.15.1
-passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-cryptography==38.0.1
-bcrypt==4.0.1
-httpx==0.25.2
-pytest==7.4.3
-pytest-asyncio==0.21.1
+bcrypt==5.0.0
+httpx==0.28.1

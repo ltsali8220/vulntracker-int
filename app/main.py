@@ -9,7 +9,7 @@ from typing import List, Optional
 import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -93,6 +93,14 @@ class UserRegister(BaseModel):
     email: str
     password: str
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        # bcrypt rejects input beyond 72 bytes
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 bytes")
+        return v
+
 
 class UserLogin(BaseModel):
     username: str
@@ -105,8 +113,7 @@ class UserOut(BaseModel):
     email: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScanCreate(BaseModel):
@@ -135,8 +142,7 @@ class ScanOut(BaseModel):
     owner_id: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShareCreate(BaseModel):
@@ -174,8 +180,7 @@ class SharedScanOut(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------

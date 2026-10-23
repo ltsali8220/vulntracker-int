@@ -37,6 +37,13 @@ def reset_db():
     Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture(autouse=True)
+def stub_notify(monkeypatch):
+    # The notify service is not running in tests; avoid a 5s timeout per scan
+    import main
+    monkeypatch.setattr(main, "_fire_notify", lambda event, payload: None)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
