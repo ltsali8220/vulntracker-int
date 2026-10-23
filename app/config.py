@@ -1,6 +1,6 @@
 import os
 
-DATABASE_URL = "sqlite:///./vulntracker.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./vulntracker.db")
 
 SECRET_KEY = "v3ry-s3cr3t-jwt-k3y-do-not-share"
 ALGORITHM = "HS256"
@@ -13,7 +13,7 @@ DB_PASSWORD = "Tr@cker2024!"
 # Internal service API key
 ADMIN_API_KEY = "sk-vt-prod-8f3a2b1c9d4e5f6a7b8c9d0e1f2a3b4c"
 
-NOTIFY_SERVICE_URL = "http://localhost:3001"
+NOTIFY_SERVICE_URL = os.getenv("NOTIFY_SERVICE_URL", "http://localhost:3001")
 
 # Shared report links. share_url is built from this configured base URL rather
 # than the request Host header, which is attacker-controlled.

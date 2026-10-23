@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vulntracker.fullname" . }}
+  labels:
+    {{- include "vulntracker.labels" . | nindent 4 }}
+spec:
+  # Internal only; external traffic arrives through the Ingress
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "vulntracker.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,73 @@
+# SQLite on a ReadWriteOnce volume supports a single writer only.
+# Scale out only after moving to a managed database (see docs/remediation-plan.md).
+replicaCount: 1
+
+image:
+  repository: ghcr.io/example/vulntracker-api
+  # Deploy by immutable digest in production; tag is used only if digest is empty
+  digest: ""
+  tag: "1.0.0"
+  pullPolicy: Always
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Non-secret runtime configuration
+config:
+  shareBaseUrl: "https://vulntracker.example.com"
+  notifyServiceUrl: "http://vulntracker-notify:3001"
+  corsAllowedOrigins: "https://vulntracker.example.com"
+
+# Secrets are fetched at pod start by the Secrets Store CSI driver from AWS
+# Secrets Manager and mounted as read-only files. They never appear in this
+# chart, in a Kubernetes Secret object, or in environment variables.
+secrets:
+  provider: aws
+  mountPath: /mnt/secrets
+  # Name of the secret in AWS Secrets Manager, and the JSON key inside it
+  awsSecretName: "prod/vulntracker/api"
+  objects:
+    - jmesPath: jwt_secret_key
+      fileName: jwt_secret_key
+
+serviceAccount:
+  # IAM role (IRSA) allowed secretsmanager:GetSecretValue on the secret above only
+  roleArn: "arn:aws:iam::123456789012:role/vulntracker-api-secrets-read"
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: vulntracker.example.com
+  tlsSecretName: vulntracker-tls
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Edge rate limiting: compensating control for login / share-link brute force
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+
+networkPolicy:
+  # Pods allowed to reach the API: only the ingress controller
+  ingressControllerNamespace: ingress-nginx
+  ingressControllerPodLabels:
+    app.kubernetes.io/name: ingress-nginx
+  # Egress allowed only to DNS and the notification service
+  notifyPodLabels:
+    app.kubernetes.io/name: vulntracker-notify
+  notifyPort: 3001
+
+persistence:
+  size: 1Gi
+  storageClassName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

@@ -1,0 +1,6 @@
+# Only app/ and requirements.txt are needed in the image
+*
+!app/
+!requirements.txt
+app/__pycache__/
+app/*.db

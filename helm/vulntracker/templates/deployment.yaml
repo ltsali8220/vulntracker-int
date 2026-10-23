@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vulntracker.fullname" . }}
+  labels:
+    {{- include "vulntracker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # Single SQLite writer: never run old and new pods against the volume together
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "vulntracker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vulntracker.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "vulntracker.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: {{ include "vulntracker.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # Non-secret configuration only. The JWT key is read from a file
+            # path, never passed as an environment variable.
+            - name: SECRET_KEY_FILE
+              value: {{ printf "%s/%s" .Values.secrets.mountPath (index .Values.secrets.objects 0).fileName | quote }}
+            - name: SHARE_BASE_URL
+              value: {{ .Values.config.shareBaseUrl | quote }}
+            - name: NOTIFY_SERVICE_URL
+              value: {{ .Values.config.notifyServiceUrl | quote }}
+            - name: CORS_ALLOWED_ORIGINS
+              value: {{ .Values.config.corsAllowedOrigins | quote }}
+            - name: DATABASE_URL
+              value: "sqlite:////data/vulntracker.db"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            privileged: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: secrets
+              mountPath: {{ .Values.secrets.mountPath }}
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "vulntracker.fullname" . }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "vulntracker.fullname" . }}-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
