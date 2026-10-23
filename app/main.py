@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import or_
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 import models
 from auth import create_access_token, get_current_user, get_password_hash, verify_password
 from config import (
+    CORS_ALLOWED_ORIGINS,
     NOTIFY_SERVICE_URL,
     SHARE_BASE_URL,
     SHARE_LINK_MAX_PASSWORD_ATTEMPTS,
@@ -60,15 +62,24 @@ app = FastAPI(
 )
 
 
+# The previous middleware reflected any Origin with credentials allowed, letting
+# any website call the API from a victim's browser. Only configured origins are
+# allowed now; credentials are not needed because auth uses a Bearer header.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Share-Password"],
+)
+
+
 @app.middleware("http")
-async def cors_middleware(request: Request, call_next):
+async def security_headers(request: Request, call_next):
     response = await call_next(request)
-    origin = request.headers.get("origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
     return response
 
 
@@ -96,6 +107,8 @@ class UserRegister(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("password must be at least 8 characters")
         # bcrypt rejects input beyond 72 bytes
         if len(v.encode("utf-8")) > 72:
             raise ValueError("password must be at most 72 bytes")
@@ -236,8 +249,8 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 
 @app.get("/scans", response_model=List[ScanOut])
 def list_scans(
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):

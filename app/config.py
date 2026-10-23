@@ -26,6 +26,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 NOTIFY_SERVICE_URL = os.getenv("NOTIFY_SERVICE_URL", "http://localhost:3001")
 
+# Comma-separated browser origins allowed to call the API (empty = none)
+CORS_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 # Shared report links. share_url is built from this configured base URL rather
 # than the request Host header, which is attacker-controlled.
 SHARE_BASE_URL = os.getenv("SHARE_BASE_URL", "http://localhost:8000").rstrip("/")

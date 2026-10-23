@@ -72,29 +72,29 @@ def test_register_user():
     resp = client.post("/auth/register", json={
         "username": "bob",
         "email": "bob@example.com",
-        "password": "secret",
+        "password": "secret-pass-1",
     })
     assert resp.status_code == 201
     assert resp.json()["username"] == "bob"
 
 
 def test_register_duplicate_username():
-    payload = {"username": "bob", "email": "bob@example.com", "password": "secret"}
+    payload = {"username": "bob", "email": "bob@example.com", "password": "secret-pass-1"}
     client.post("/auth/register", json=payload)
     resp = client.post("/auth/register", json={**payload, "email": "bob2@example.com"})
     assert resp.status_code == 400
 
 
 def test_login_success():
-    client.post("/auth/register", json={"username": "alice", "email": "alice@example.com", "password": "pw"})
-    resp = client.post("/auth/login", json={"username": "alice", "password": "pw"})
+    client.post("/auth/register", json={"username": "alice", "email": "alice@example.com", "password": "pw-long-enough"})
+    resp = client.post("/auth/login", json={"username": "alice", "password": "pw-long-enough"})
     assert resp.status_code == 200
     assert "access_token" in resp.json()
 
 
 def test_login_wrong_password():
-    client.post("/auth/register", json={"username": "alice", "email": "alice@example.com", "password": "pw"})
-    resp = client.post("/auth/login", json={"username": "alice", "password": "wrong"})
+    client.post("/auth/register", json={"username": "alice", "email": "alice@example.com", "password": "pw-long-enough"})
+    resp = client.post("/auth/login", json={"username": "alice", "password": "wrong-password"})
     assert resp.status_code == 401
 
 
@@ -453,3 +453,30 @@ def test_share_password_accepted_via_header():
                                   headers=auth_headers(token)).json()["share_url"])
     assert client.get(path, headers={"X-Share-Password": "auditor-pass-1"}).status_code == 200
     assert client.get(path, headers={"X-Share-Password": "nope-nope-1"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Hardening
+# ---------------------------------------------------------------------------
+
+def test_cors_does_not_reflect_arbitrary_origin():
+    resp = client.get("/health", headers={"Origin": "https://evil.example"})
+    assert resp.headers.get("access-control-allow-origin") != "https://evil.example"
+    assert resp.headers.get("access-control-allow-credentials") != "true"
+
+
+def test_register_rejects_short_password():
+    resp = client.post("/auth/register", json={"username": "dave", "email": "dave@example.com", "password": "short"})
+    assert resp.status_code == 422
+
+
+def test_list_scans_limit_is_capped():
+    token = register_and_login()
+    resp = client.get("/scans?limit=100000", headers=auth_headers(token))
+    assert resp.status_code == 422
+
+
+def test_security_headers_present():
+    resp = client.get("/health")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["x-frame-options"] == "DENY"
