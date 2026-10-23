@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -35,3 +35,26 @@ class ScanResult(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="scans")
+    share_links = relationship("ShareLink", back_populates="scan", cascade="all, delete-orphan")
+
+
+class ShareLink(Base):
+    """Time-limited public link to a single scan result.
+
+    Only a SHA-256 digest of the share token is stored, so a database leak
+    does not expose usable links.
+    """
+
+    __tablename__ = "share_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token_hash = Column(String(64), unique=True, index=True, nullable=False)
+    scan_id = Column(Integer, ForeignKey("scan_results.id", ondelete="CASCADE"), nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    password_hash = Column(String(200), nullable=True)
+    failed_attempts = Column(Integer, default=0, nullable=False)
+    revoked = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime, nullable=False)                    # naive UTC
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    scan = relationship("ScanResult", back_populates="share_links")

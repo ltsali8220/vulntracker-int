@@ -148,3 +148,148 @@ def test_delete_scan():
 
     resp = client.delete(f"/scans/{scan_id}", headers=auth_headers(token))
     assert resp.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Shared report links
+# ---------------------------------------------------------------------------
+
+import hashlib  # noqa: E402
+from datetime import timedelta  # noqa: E402
+from urllib.parse import urlparse  # noqa: E402
+
+import models  # noqa: E402
+
+
+def create_scan_for(token, title="Shared finding"):
+    return client.post("/scans", json={
+        "title": title,
+        "severity": "high",
+        "affected_component": "billing-api",
+        "remediation_notes": "internal: rotate creds on db-prod-01",
+    }, headers=auth_headers(token)).json()["id"]
+
+
+def share_path(share_url):
+    return urlparse(share_url).path
+
+
+def test_share_link_roundtrip():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    resp = client.post(f"/scans/{scan_id}/share", headers=auth_headers(token))
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["share_url"].startswith("http://localhost:8000/share/")
+    assert body["password_protected"] is False
+
+    shared = client.get(share_path(body["share_url"]))
+    assert shared.status_code == 200
+    assert shared.json()["title"] == "Shared finding"
+    assert shared.headers["cache-control"] == "no-store"
+    # Internal fields are not exposed publicly
+    assert "owner_id" not in shared.json()
+    assert "remediation_notes" not in shared.json()
+
+
+def test_share_requires_auth():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    resp = client.post(f"/scans/{scan_id}/share")
+    assert resp.status_code in (401, 403)
+
+
+def test_cannot_share_another_users_scan():
+    alice = register_and_login()
+    scan_id = create_scan_for(alice)
+    mallory = register_and_login("mallory", "mallory@example.com")
+    resp = client.post(f"/scans/{scan_id}/share", headers=auth_headers(mallory))
+    assert resp.status_code == 404
+
+
+def test_share_unknown_token_returns_404():
+    resp = client.get("/share/not-a-real-token")
+    assert resp.status_code == 404
+
+
+def test_share_token_is_stored_hashed():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    share_url = client.post(f"/scans/{scan_id}/share", headers=auth_headers(token)).json()["share_url"]
+    raw = share_url.rsplit("/", 1)[-1]
+    db = TestingSessionLocal()
+    try:
+        link = db.query(models.ShareLink).one()
+        assert link.token_hash == hashlib.sha256(raw.encode()).hexdigest()
+        assert raw not in link.token_hash
+    finally:
+        db.close()
+
+
+def test_share_link_expires():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    share_url = client.post(f"/scans/{scan_id}/share", headers=auth_headers(token)).json()["share_url"]
+    db = TestingSessionLocal()
+    try:
+        link = db.query(models.ShareLink).one()
+        link.expires_at = link.expires_at - timedelta(hours=25)
+        db.commit()
+    finally:
+        db.close()
+    assert client.get(share_path(share_url)).status_code == 404
+
+
+def test_share_link_expiry_is_24_hours():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    client.post(f"/scans/{scan_id}/share", headers=auth_headers(token))
+    db = TestingSessionLocal()
+    try:
+        link = db.query(models.ShareLink).one()
+        ttl = link.expires_at - link.created_at
+        assert timedelta(hours=23, minutes=59) < ttl <= timedelta(hours=24, minutes=1)
+    finally:
+        db.close()
+
+
+def test_password_protected_share_link():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    resp = client.post(f"/scans/{scan_id}/share", json={"password": "auditor-pass-1"},
+                       headers=auth_headers(token))
+    assert resp.status_code == 201
+    assert resp.json()["password_protected"] is True
+    path = share_path(resp.json()["share_url"])
+
+    assert client.get(path).status_code == 401
+    assert client.get(path, params={"password": "wrong-password"}).status_code == 401
+    ok = client.get(path, params={"password": "auditor-pass-1"})
+    assert ok.status_code == 200
+    assert ok.json()["id"] == scan_id
+
+
+def test_share_password_lockout():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    path = share_path(client.post(f"/scans/{scan_id}/share", json={"password": "auditor-pass-1"},
+                                  headers=auth_headers(token)).json()["share_url"])
+    for _ in range(5):
+        assert client.get(path, params={"password": "guess-guess"}).status_code == 401
+    # Locked even with the correct password
+    assert client.get(path, params={"password": "auditor-pass-1"}).status_code == 429
+
+
+def test_share_password_too_short_rejected():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    resp = client.post(f"/scans/{scan_id}/share", json={"password": "short"}, headers=auth_headers(token))
+    assert resp.status_code == 422
+
+
+def test_share_link_removed_with_scan():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    path = share_path(client.post(f"/scans/{scan_id}/share", headers=auth_headers(token)).json()["share_url"])
+    client.delete(f"/scans/{scan_id}", headers=auth_headers(token))
+    assert client.get(path).status_code == 404

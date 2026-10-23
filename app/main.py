@@ -1,17 +1,24 @@
+import hashlib
 import logging
+import secrets
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 import models
 from auth import create_access_token, get_current_user, get_password_hash, verify_password
-from config import NOTIFY_SERVICE_URL
+from config import (
+    NOTIFY_SERVICE_URL,
+    SHARE_BASE_URL,
+    SHARE_LINK_MAX_PASSWORD_ATTEMPTS,
+    SHARE_LINK_TTL_HOURS,
+)
 from database import engine, get_db, search_scans_by_query
 
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +109,45 @@ class ScanOut(BaseModel):
     remediation_notes: Optional[str]
     owner_id: int
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ShareCreate(BaseModel):
+    password: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if len(v) < 8:
+            raise ValueError("password must be at least 8 characters")
+        # bcrypt silently ignores input beyond 72 bytes
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 bytes")
+        return v
+
+
+class ShareOut(BaseModel):
+    share_url: str
+    expires_at: datetime
+    password_protected: bool
+
+
+class SharedScanOut(BaseModel):
+    """Public view of a scan: omits internal fields (owner_id, remediation_notes)."""
+
+    id: int
+    title: str
+    description: Optional[str]
+    severity: str
+    status: str
+    cve_id: Optional[str]
+    affected_component: str
+    created_at: datetime
+    updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
@@ -270,6 +316,94 @@ def delete_scan(
         raise HTTPException(status_code=404, detail="Scan not found")
     db.delete(scan)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Shared report links
+# ---------------------------------------------------------------------------
+
+def _utcnow() -> datetime:
+    # Naive UTC, matching how SQLite stores the DateTime columns
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _hash_share_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+@app.post("/scans/{scan_id}/share", response_model=ShareOut, status_code=201)
+def create_share_link(
+    scan_id: int,
+    payload: Optional[ShareCreate] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    # Only the scan owner may share it; 404 (not 403) avoids confirming the scan exists
+    scan = db.query(models.ScanResult).filter(
+        models.ScanResult.id == scan_id,
+        models.ScanResult.owner_id == current_user.id,
+    ).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    password = payload.password if payload else None
+    token = secrets.token_urlsafe(32)  # 256 bits of entropy
+    link = models.ShareLink(
+        token_hash=_hash_share_token(token),
+        scan_id=scan.id,
+        created_by=current_user.id,
+        password_hash=get_password_hash(password) if password else None,
+        expires_at=_utcnow() + timedelta(hours=SHARE_LINK_TTL_HOURS),
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    logger.info("Share link %s created for scan %s by user %s", link.id, scan.id, current_user.id)
+    return ShareOut(
+        share_url=f"{SHARE_BASE_URL}/share/{token}",
+        expires_at=link.expires_at,
+        password_protected=link.password_hash is not None,
+    )
+
+
+@app.get("/share/{token}", response_model=SharedScanOut)
+def get_shared_scan(
+    token: str,
+    response: Response,
+    password: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    # Shared data must not be cached by proxies/browsers or leaked via Referer
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex"
+
+    not_found = HTTPException(status_code=404, detail="Share link not found or expired")
+    link = db.query(models.ShareLink).filter(
+        models.ShareLink.token_hash == _hash_share_token(token)
+    ).first()
+    # Unknown, revoked and expired links are indistinguishable to the caller
+    if not link or link.revoked or link.expires_at <= _utcnow() or not link.scan:
+        raise not_found
+
+    if link.password_hash:
+        if link.failed_attempts >= SHARE_LINK_MAX_PASSWORD_ATTEMPTS:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed password attempts; request a new link from the owner",
+            )
+        if not password:
+            raise HTTPException(status_code=401, detail="Password required")
+        if not verify_password(password, link.password_hash):
+            # Atomic increment so concurrent guesses cannot bypass the limit
+            db.query(models.ShareLink).filter(models.ShareLink.id == link.id).update(
+                {models.ShareLink.failed_attempts: models.ShareLink.failed_attempts + 1}
+            )
+            db.commit()
+            logger.warning("Failed password attempt on share link %s", link.id)
+            raise HTTPException(status_code=401, detail="Incorrect password")
+
+    return link.scan
 
 
 # ---------------------------------------------------------------------------
