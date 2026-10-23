@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import secrets
-import traceback
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -48,15 +48,13 @@ async def cors_middleware(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error("Unhandled exception on %s: %s", request.url, exc)
+    # Full details stay in server logs; the client gets only a correlation id.
+    # Returning the traceback leaked SQL statements, file paths and library versions.
+    error_id = uuid.uuid4().hex
+    logger.exception("Unhandled exception %s on %s %s", error_id, request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={
-            "error": str(exc),
-            "type": type(exc).__name__,
-            "traceback": traceback.format_exc(),
-            "path": str(request.url),
-        },
+        content={"detail": "Internal server error", "error_id": error_id},
     )
 
 
@@ -192,14 +190,10 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
 
 @app.post("/auth/login")
 def login(payload: UserLogin, db: Session = Depends(get_db)):
-    logger.info("Login attempt — username: %s password: %s", payload.username, payload.password)
     user = db.query(models.User).filter(models.User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.hashed_password):
-        logger.warning(
-            "Failed login — username: '%s' password: '%s'",
-            payload.username,
-            payload.password,
-        )
+        # Never log the submitted password; %r keeps control characters from forging log lines
+        logger.warning("Failed login for username %r", payload.username)
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     token = create_access_token({"sub": user.username})
     return {"access_token": token, "token_type": "bearer"}

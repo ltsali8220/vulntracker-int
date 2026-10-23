@@ -388,3 +388,35 @@ def test_get_scan_of_another_user_returns_404():
     mallory = register_and_login("mallory", "mallory@example.com")
     resp = client.get(f"/scans/{scan_id}", headers=auth_headers(mallory))
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Logging and error handling
+# ---------------------------------------------------------------------------
+
+import logging  # noqa: E402
+
+
+def test_login_never_logs_password(caplog):
+    client.post("/auth/register", json={"username": "carol", "email": "carol@example.com",
+                                        "password": "Correct-Horse-9"})
+    with caplog.at_level(logging.DEBUG):
+        client.post("/auth/login", json={"username": "carol", "password": "Correct-Horse-9"})
+        client.post("/auth/login", json={"username": "carol", "password": "Wrong-Guess-123"})
+    assert "Correct-Horse-9" not in caplog.text
+    assert "Wrong-Guess-123" not in caplog.text
+
+
+def test_unhandled_error_does_not_leak_internals():
+    from main import app as main_app
+
+    @main_app.get("/_test/boom")
+    def boom():
+        raise RuntimeError("secret internal detail")
+
+    resp = client.get("/_test/boom")
+    assert resp.status_code == 500
+    body = resp.json()
+    assert "traceback" not in body
+    assert "secret internal detail" not in resp.text
+    assert body["error_id"]
