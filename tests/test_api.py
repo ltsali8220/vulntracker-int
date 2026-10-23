@@ -420,3 +420,29 @@ def test_unhandled_error_does_not_leak_internals():
     assert "traceback" not in body
     assert "secret internal detail" not in resp.text
     assert body["error_id"]
+
+
+def test_access_log_redacts_share_token_and_password():
+    from main import ShareSecretRedactionFilter
+
+    # Same shape as uvicorn's access log record
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("10.0.0.1:5000", "GET", "/share/pipDWHy_w1v2cxkPq?password=AuditorSecret9", "1.1", 200),
+        None,
+    )
+    ShareSecretRedactionFilter().filter(record)
+    line = record.getMessage()
+    assert "pipDWHy_w1v2cxkPq" not in line
+    assert "AuditorSecret9" not in line
+    assert "/share/[REDACTED]?password=[REDACTED]" in line
+
+
+def test_share_password_accepted_via_header():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    path = share_path(client.post(f"/scans/{scan_id}/share", json={"password": "auditor-pass-1"},
+                                  headers=auth_headers(token)).json()["share_url"])
+    assert client.get(path, headers={"X-Share-Password": "auditor-pass-1"}).status_code == 200
+    assert client.get(path, headers={"X-Share-Password": "nope-nope-1"}).status_code == 401

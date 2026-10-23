@@ -1,12 +1,13 @@
 import hashlib
 import logging
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy import or_
@@ -24,6 +25,31 @@ from database import engine, get_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_SHARE_TOKEN_RE = re.compile(r"(/share/)[^/?\s\"]+")
+_PASSWORD_PARAM_RE = re.compile(r"([?&]password=)[^&\s\"]*", re.IGNORECASE)
+
+
+def redact_share_secrets(text: str) -> str:
+    """Mask share-link tokens and ?password= values in a log string."""
+    return _PASSWORD_PARAM_RE.sub(r"\1[REDACTED]", _SHARE_TOKEN_RE.sub(r"\1[REDACTED]", text))
+
+
+class ShareSecretRedactionFilter(logging.Filter):
+    """Share tokens are bearer credentials and the spec puts the link password
+    in the query string, so uvicorn's access log ("GET /share/<token>?password=..")
+    would otherwise store both in plain text."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_share_secrets(a) if isinstance(a, str) else a for a in record.args)
+        if isinstance(record.msg, str):
+            record.msg = redact_share_secrets(record.msg)
+        return True
+
+
+for _name in ("uvicorn.access", "uvicorn.error", __name__):
+    logging.getLogger(_name).addFilter(ShareSecretRedactionFilter())
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -387,8 +413,14 @@ def get_shared_scan(
     token: str,
     response: Response,
     password: Optional[str] = None,
+    x_share_password: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
+    # The X-Share-Password header is preferred: unlike the ?password= query
+    # parameter (kept because the spec requires it) it is not recorded in
+    # browser history or proxy logs. Access-log redaction covers the query form.
+    password = x_share_password or password
+
     # Shared data must not be cached by proxies/browsers or leaked via Referer
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
