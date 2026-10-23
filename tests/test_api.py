@@ -369,3 +369,22 @@ def test_token_without_exp_rejected():
     forged = pyjwt.encode({"sub": "alice"}, SECRET_KEY, algorithm="HS256")
     resp = client.get("/scans", headers=auth_headers(forged))
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Authorisation
+# ---------------------------------------------------------------------------
+
+def test_get_scan_owner_can_read():
+    token = register_and_login()
+    scan_id = create_scan_for(token)
+    resp = client.get(f"/scans/{scan_id}", headers=auth_headers(token))
+    assert resp.status_code == 200
+
+
+def test_get_scan_of_another_user_returns_404():
+    alice = register_and_login()
+    scan_id = create_scan_for(alice)
+    mallory = register_and_login("mallory", "mallory@example.com")
+    resp = client.get(f"/scans/{scan_id}", headers=auth_headers(mallory))
+    assert resp.status_code == 404
