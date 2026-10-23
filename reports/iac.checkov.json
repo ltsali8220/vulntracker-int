@@ -1,0 +1,197 @@
+{
+    "check_type": "helm",
+    "results": {
+        "failed_checks": [
+            {
+                "check_id": "CKV_K8S_21",
+                "bc_check_id": "BC_K8S_20",
+                "check_name": "The default namespace should not be used",
+                "check_result": {
+                    "result": "FAILED",
+                    "evaluated_keys": []
+                },
+                "code_block": null,
+                "file_path": "/vulntracker/templates/serviceaccount.yaml",
+                "file_abs_path": "/tmp/tmpl6k2ypb_/vulntracker/templates/serviceaccount.yaml",
+                "repo_file_path": "/vulntracker/templates/serviceaccount.yaml",
+                "file_line_range": [
+                    3,
+                    16
+                ],
+                "resource": "ServiceAccount.default.release-name-vulntracker",
+                "evaluations": {},
+                "check_class": "checkov.kubernetes.checks.resource.k8s.DefaultNamespace",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": "https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-20",
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null
+            },
+            {
+                "check_id": "CKV_K8S_21",
+                "bc_check_id": "BC_K8S_20",
+                "check_name": "The default namespace should not be used",
+                "check_result": {
+                    "result": "FAILED",
+                    "evaluated_keys": []
+                },
+                "code_block": null,
+                "file_path": "/vulntracker/templates/deployment.yaml",
+                "file_abs_path": "/tmp/tmpl6k2ypb_/vulntracker/templates/deployment.yaml",
+                "repo_file_path": "/vulntracker/templates/deployment.yaml",
+                "file_line_range": [
+                    3,
+                    104
+                ],
+                "resource": "Deployment.default.release-name-vulntracker",
+                "evaluations": {},
+                "check_class": "checkov.kubernetes.checks.resource.k8s.DefaultNamespace",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": "https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-20",
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null
+            },
+            {
+                "check_id": "CKV_K8S_43",
+                "bc_check_id": "BC_K8S_39",
+                "check_name": "Image should use digest",
+                "check_result": {
+                    "result": "FAILED",
+                    "evaluated_keys": [
+                        "spec/template/spec/containers/[0]/image"
+                    ]
+                },
+                "code_block": null,
+                "file_path": "/vulntracker/templates/deployment.yaml",
+                "file_abs_path": "/tmp/tmpl6k2ypb_/vulntracker/templates/deployment.yaml",
+                "repo_file_path": "/vulntracker/templates/deployment.yaml",
+                "file_line_range": [
+                    3,
+                    104
+                ],
+                "resource": "Deployment.default.release-name-vulntracker",
+                "evaluations": {},
+                "check_class": "checkov.kubernetes.checks.resource.k8s.ImageDigest",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": "https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-39",
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null
+            },
+            {
+                "check_id": "CKV_K8S_21",
+                "bc_check_id": "BC_K8S_20",
+                "check_name": "The default namespace should not be used",
+                "check_result": {
+                    "result": "FAILED",
+                    "evaluated_keys": []
+                },
+                "code_block": null,
+                "file_path": "/vulntracker/templates/service.yaml",
+                "file_abs_path": "/tmp/tmpl6k2ypb_/vulntracker/templates/service.yaml",
+                "repo_file_path": "/vulntracker/templates/service.yaml",
+                "file_line_range": [
+                    3,
+                    23
+                ],
+                "resource": "Service.default.release-name-vulntracker",
+                "evaluations": {},
+                "check_class": "checkov.kubernetes.checks.resource.k8s.DefaultNamespace",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": "https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-20",
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null
+            },
+            {
+                "check_id": "CKV_K8S_21",
+                "bc_check_id": "BC_K8S_20",
+                "check_name": "The default namespace should not be used",
+                "check_result": {
+                    "result": "FAILED",
+                    "evaluated_keys": []
+                },
+                "code_block": null,
+                "file_path": "/vulntracker/templates/ingress.yaml",
+                "file_abs_path": "/tmp/tmpl6k2ypb_/vulntracker/templates/ingress.yaml",
+                "repo_file_path": "/vulntracker/templates/ingress.yaml",
+                "file_line_range": [
+                    3,
+                    34
+                ],
+                "resource": "Ingress.default.release-name-vulntracker",
+                "evaluations": {},
+                "check_class": "checkov.kubernetes.checks.resource.k8s.DefaultNamespace",
+                "fixed_definition": null,
+                "entity_tags": null,
+                "caller_file_path": null,
+                "caller_file_line_range": null,
+                "resource_address": null,
+                "severity": null,
+                "bc_category": null,
+                "benchmarks": null,
+                "description": null,
+                "short_description": null,
+                "vulnerability_details": null,
+                "connected_node": null,
+                "guideline": "https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-20",
+                "details": [],
+                "check_len": null,
+                "definition_context_file_path": null
+            }
+        ]
+    },
+    "summary": {
+        "passed": 91,
+        "failed": 5,
+        "skipped": 0,
+        "parsing_errors": 0,
+        "resource_count": 8,
+        "checkov_version": "3.3.30"
+    }
+}

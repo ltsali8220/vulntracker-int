@@ -1,217 +1,151 @@
-# Security Automation Engineer — Take-Home Assignment
+# VulnTracker: Security Automation Take-Home (Solution)
 
-Welcome. This assignment is designed to reflect the real work of a Lead Security Automation Engineer: extending an existing service, identifying and assessing security risks, remediating them with code, and deploying it securely. There are no trick questions — we are evaluating your depth of knowledge, your judgment under constraints, and your ability to communicate risk.
+VulnTracker is a two-service system for tracking vulnerability scan results:
+a Python/FastAPI API (`app/`) and a Node.js webhook notification service (`notify/`).
+The original assignment brief is in [`docs/ASSIGNMENT.md`](docs/ASSIGNMENT.md).
 
-**Estimated time: 4–6 hours.** We respect your time. If you find yourself going significantly over, scope down rather than rushing.
+| Deliverable | Where |
+|---|---|
+| Task 1: Shared Report Link feature | `app/main.py` (`/scans/{id}/share`, `/share/{token}`), `app/models.py` (`ShareLink`), tests in `tests/test_api.py` |
+| Task 2: Scan reports | [`reports/`](reports/) (baseline) and [`reports/post-remediation/`](reports/post-remediation/) |
+| Task 2: Prioritised findings | [`docs/findings.md`](docs/findings.md) |
+| Task 3: Fixes | one commit per fix (see `git log`), [`docs/remediation-plan.md`](docs/remediation-plan.md) |
+| Task 4: Container + deployment | [`Dockerfile`](Dockerfile), [`helm/vulntracker/`](helm/vulntracker/) |
+| Task 5: Executive summary | [`docs/executive-summary.md`](docs/executive-summary.md) |
+| CI security gates | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 
 ---
 
-## Background
+## Running locally
 
-**VulnTracker** is a two-service system for managing vulnerability scan results:
-
-- **`app/`** — Python/FastAPI REST API. Security teams use it to log findings, track remediation, and share reports with stakeholders.
-- **`notify/`** — Node.js/Express notification service. Intended to dispatch webhook events to registered endpoints when scan records are created or updated.
-
-Both services are working but imperfect internal prototypes. Neither has gone through a formal security review. The Python API calls the notification service in the background whenever a scan is created or updated — start both services to see the full flow.
-
----
-
-## Getting Started
-
-**Create your own repository for this assignment.** Do not fork — your solution must be in a fresh repo. You may use the starter code as a base, but your work must be in your own repo.
-
-```bash
-# 1. Clone the assignment repo locally
-git clone https://github.com/cloudtriquetra/asa-assignment.git
-cd asa-assignment
-
-# 2. Point it at your own new GitHub repo (create one first at github.com)
-git remote set-url origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
-```
-
-From here, work on your own repo and share its URL when you submit.
-
-**Requirements:** Python 3.11 (exactly — see CI), Node.js 20+, Docker
-
-**Python API (`app/`)**
+**Requirements:** Python 3.11 (exactly, matching CI), Node.js 20+, Docker.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
 ```
 
-The API must be started from inside the `app/` directory — the modules use bare imports and won't resolve from the repo root:
+The API **refuses to start without a signing key** (there is deliberately no default). Generate one per environment:
 
 ```bash
+export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
 cd app
 uvicorn main:app --reload
 ```
 
-Available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+API at `http://localhost:8000`, docs at `http://localhost:8000/docs`.
 
-Run the Python test suite from the **repo root**:
+Tests (from the repo root): `pytest tests/ -v`
+
+Notification service: `cd notify && npm ci && npm start` (port 3001). Tests: `npm test` (stop the service first; the tests use the same port).
+
+### Configuration
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `SECRET_KEY_FILE` | Path to a file containing the JWT signing key (used in Kubernetes) | none |
+| `SECRET_KEY` | JWT signing key (local development only); ≥ 32 characters | none (**required** if no file) |
+| `DATABASE_URL` | SQLAlchemy URL | `sqlite:///./vulntracker.db` (`sqlite:////data/vulntracker.db` in the image) |
+| `SHARE_BASE_URL` | Base used to build share links | `http://localhost:8000` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins | none (no cross-origin access) |
+| `NOTIFY_SERVICE_URL` | Notification service URL | `http://localhost:3001` |
+| `NOTIFY_SERVICE_KEY` | (notify) key sent to webhooks | empty |
+
+---
+
+## Docker
+
+Build:
 
 ```bash
-pytest tests/ -v
+docker build -t vulntracker-api:latest .
 ```
 
-**Notification Service (`notify/`)**
+Run (key passed as a mounted file, the same pattern as production):
 
 ```bash
-cd notify
-npm install
-npm start
+mkdir -p secrets
+python -c 'import secrets; print(secrets.token_urlsafe(48))' > secrets/jwt_secret_key
+
+docker run -d --name vulntracker -p 8000:8000 \
+  --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+  -v vulntracker-data:/data \
+  -v "$PWD/secrets:/mnt/secrets:ro" \
+  -e SECRET_KEY_FILE=/mnt/secrets/jwt_secret_key \
+  vulntracker-api:latest
+
+curl http://localhost:8000/health
+docker inspect --format '{{.State.Health.Status}}' vulntracker   # "healthy" after ~30 s
 ```
 
-Available at `http://localhost:3001`.
+For a quick local try you can pass `-e SECRET_KEY=...` instead of the file mount. `secrets/` is not committed (add it to `.gitignore` if you create it inside the repo).
 
-Run the Node.js test suite (stop the notify service first if it is running — the test suite starts its own server on the same port):
+Image properties: multi-stage build; digest-pinned `python:3.11-slim-trixie` base (chosen over distroless after scanning, see `docs/findings.md` F-12); OS security updates applied at build; pip/setuptools removed; runs as uid **65532**; `HEALTHCHECK` on `/health`; only `/data` is writable; no secrets in the image.
+
+---
+
+## Kubernetes (Helm)
+
+Prerequisites in the cluster: an NGINX ingress controller, the [Secrets Store CSI driver](https://secrets-store-csi-driver.sigs.k8s.io/) with the AWS provider, a NetworkPolicy-enforcing CNI, and an IAM role (IRSA) allowed to read only the app's secret.
 
 ```bash
-cd notify
-npm test
+# 1. Store the key in AWS Secrets Manager (never in the chart)
+aws secretsmanager create-secret --name prod/vulntracker/api \
+  --secret-string "{\"jwt_secret_key\":\"$(python -c 'import secrets;print(secrets.token_urlsafe(48))')\"}"
+
+# 2. Namespace with Pod Security "restricted"
+kubectl create namespace vulntracker
+kubectl label namespace vulntracker pod-security.kubernetes.io/enforce=restricted
+
+# 3. Deploy by image digest (the chart refuses to render without one)
+helm upgrade --install vulntracker helm/vulntracker -n vulntracker \
+  --set image.repository=<registry>/vulntracker-api \
+  --set image.digest=sha256:<digest-from-ci> \
+  --set serviceAccount.roleArn=arn:aws:iam::<acct>:role/vulntracker-api-secrets-read
 ```
 
----
+What the chart enforces:
 
-## Your Tasks
-
-### Task 1 — Extend the App _(~1–1.5 hrs)_
-
-Implement the **"Shared Report Link"** feature:
-
-> As a VulnTracker user, I want to share a specific scan result with an external stakeholder (e.g. a customer or auditor) via a unique link. The link must expire after **24 hours** and must support **optional password protection**.
-
-Add the following endpoints to the app:
-
-| Method | Path                     | Auth          | Description                                                                                                              |
-| ------ | ------------------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `POST` | `/scans/{scan_id}/share` | Bearer token  | Generate a share token for a scan. Accepts optional `password` in the request body. Returns `{ "share_url": "..." }`     |
-| `GET`  | `/share/{token}`         | None (public) | Return the scan data if the token is valid and not expired. If password-protected, require a `password` query parameter. |
-
-Implementation choices are yours. We will read and evaluate the code you write here — including the security properties of your implementation. For the `share_url` value, use the incoming request's host, or hard-code `http://localhost:8000` for the prototype — document whichever you choose.
+* **Secrets from a secrets manager:** `SecretProviderClass` mounts the key from AWS Secrets Manager as a read-only file at `/mnt/secrets`. It is not in the chart, not a Kubernetes `Secret` object, and not an environment variable; the app reads it via `SECRET_KEY_FILE`.
+* **Restricted network access:** `ClusterIP` service, external access only through a TLS ingress with rate limits; `NetworkPolicy` allows ingress **only from the ingress controller** on port 8000, and egress only to DNS and the notify service.
+* **Resource limits and security contexts:** CPU/memory requests and limits; `runAsNonRoot`, uid 65532, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, all capabilities dropped, seccomp `RuntimeDefault`; service-account token not mounted; image by digest; dedicated namespace.
 
 ---
 
-### Task 2 — Security Analysis _(~1.5 hrs)_
+## Shared Report Link feature
 
-#### 2a. Run the required scans
+```bash
+# Create a link (owner only). Password optional, 8+ characters.
+curl -X POST http://localhost:8000/scans/1/share \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"password": "auditor-pass-1"}'
+# -> {"share_url": "http://localhost:8000/share/<token>", "expires_at": "...", "password_protected": true}
 
-You must run **all four** of the following scan categories. Select an appropriate open-source or free-tier tool for each — your tool choices are part of the evaluation.
-
-| Scan type                                      | What it covers                                                                         |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| **Static Application Security Testing (SAST)** | Source code — identify insecure coding patterns, injection risks, hardcoded secrets    |
-| **Dependency / SCA vulnerability scan**        | Third-party packages — known CVEs in pinned dependencies                               |
-| **Container image scan**                       | The Docker image you build — OS packages, installed libraries, misconfigurations       |
-| **Infrastructure-as-Code (IaC) security scan** | Your Helm chart or Terraform — misconfigurations, insecure defaults, policy violations. Complete Task 4 first, then run this scan. |
-
-Save the raw JSON output of each tool to the `reports/` directory, named clearly by scan type:
-
-```
-reports/
-├── sast.<tool>.json
-├── sca.<tool>.json
-├── container.<tool>.json
-└── iac.<tool>.json
+# Open it (public). Header form preferred; ?password= also accepted per the spec.
+curl http://localhost:8000/share/<token> -H "X-Share-Password: auditor-pass-1"
+curl "http://localhost:8000/share/<token>?password=auditor-pass-1"
 ```
 
-#### 2b. Prioritised findings
+**`share_url` decision:** links are built from the configured `SHARE_BASE_URL` (default `http://localhost:8000`), **not** from the incoming request's Host header. The Host header is client-controlled, so using it would let an attacker get the API to issue links pointing to their own domain.
 
-Write a `docs/findings.md` with a table of security findings, sourced from your scans and your own manual review. For each finding:
-
-- Tool and scan type that detected it (or "manual")
-- Severity (your assessment — justify it)
-- Business impact in the context of _this specific application_
-- Whether it is in the starter code or in your new feature
-
-**Do not copy-paste tool output.** We are evaluating your ability to interpret findings and apply business context to prioritisation — not your ability to run a command.
+Other decisions: 256-bit random tokens stored only as SHA-256 hashes; 24 h server-side expiry; bcrypt-hashed password with a 5-attempt lockout; identical 404 for unknown/expired/revoked links; public view omits `owner_id` and internal `remediation_notes` (assumption: external stakeholders should not see internal remediation notes); `no-store` / `no-referrer` headers; tokens and passwords are redacted from logs.
 
 ---
 
-### Task 3 — Remediate _(~1 hr)_
+## Security scanning
 
-- Fix **at least 3 critical or high severity findings** in code. Show the changes clearly (they will be visible in your git diff / PR).
-- At least one fix must be in the code you wrote in Task 1.
-- For findings you do not fix, document why in `docs/remediation-plan.md`: what is the residual risk, what effort would remediation require, and what compensating controls (if any) exist?
+| Type | Tool | Local command (examples) | CI job |
+|---|---|---|---|
+| SAST | Semgrep, Bandit, gitleaks | `semgrep scan --config p/python --config p/security-audit --config p/secrets app notify/src` | `sast` (fails on high/critical) |
+| SCA | pip-audit, npm audit | `pip-audit -r requirements-dev.txt`; `cd notify && npm audit` | `sca` (fails on any Python vuln / Node high+) |
+| Container | Trivy | `trivy image vulntracker-api:latest` | `container-scan` (fails on fixable critical) |
+| IaC | Checkov | `checkov -d helm --framework helm` | `iac-scan` (fails on any failed check) |
 
----
+Tool choices and how findings were prioritised are explained in [`docs/findings.md`](docs/findings.md).
 
-### Task 4 — Containerisation and Deployment Artifacts _(~30–45 min)_
+## Assumptions
 
-#### Dockerfile (mandatory)
-
-Write a production-grade `Dockerfile` for the **Python FastAPI service** (`app/`). It must:
-
-- Use a minimal, pinned base image
-- Run as a non-root user
-- Include a `HEALTHCHECK`
-- Not embed secrets or credentials
-
-The container image must build successfully and the app must be reachable via `docker run`. Include build and run instructions in your README.
-
-#### Infrastructure
-
-Add either a `terraform/` or `helm/` directory (your choice) that could deploy this service to a Kubernetes cluster or cloud environment. Your deployment must:
-
-- Source secrets from a secrets manager (not hardcoded in manifests or env vars)
-- Restrict network ingress to only what is required
-- Define resource limits and security contexts
-
----
-
-### Task 5 — Executive Summary _(~30 min)_
-
-Write `docs/executive-summary.md` as if you are presenting to a CISO who has 5 minutes.
-
-Cover:
-
-1. The overall security posture of the application before and after your work
-2. The top 3 residual risks and the reason they were not fully remediated
-3. Your recommended next steps if this were a real production service
-
-No jargon. No tool names in the first paragraph. Your audience cares about business risk, not CVE numbers.
-
----
-
-## Submission
-
-Push your completed solution to your own GitHub repository and share the URL with us. Your repository must contain:
-
-```
-/
-├── app/                        # extended Python API code
-├── notify/                     # Node.js notification service (no changes required)
-├── Dockerfile                  # mandatory (may cover one or both services)
-├── reports/
-│   ├── sast.<tool>.json
-│   ├── sca.<tool>.json
-│   ├── container.<tool>.json
-│   └── iac.<tool>.json
-├── terraform/  OR  helm/
-├── docs/
-│   ├── findings.md
-│   ├── remediation-plan.md
-│   └── executive-summary.md
-├── tests/                      # updated if you added Python tests
-└── README.md                   # update with Docker build/run instructions
-```
-
-CI must pass (green) on your repo before submission.
-
----
-
-## What We Are Looking For
-
-We are not grading on volume. We are grading on judgment.
-
-- **Security depth**: Did you find the real issues? Did you prioritise them correctly for this application?
-- **Implementation security**: Does your new feature introduce, or avoid, new vulnerabilities?
-- **Remediation quality**: Are your fixes correct and complete? Are your deferral reasons honest?
-- **Deployment security**: Does your container and infrastructure configuration reflect real-world security practices?
-- **Communication**: Would a non-technical executive understand your summary?
-
-Good luck. If anything in the brief is ambiguous, document your assumption and proceed.
+* Notify is internal-only; its redesign is deferred (documented in the remediation plan), but its vulnerable dependencies and hard-coded key were fixed.
+* SQLite is kept for the prototype; the chart therefore runs a single replica.
+* AWS (Secrets Manager + IRSA) is used as the example cloud; the chart's `secrets.provider` can be switched to Vault/Azure/GCP CSI providers.
