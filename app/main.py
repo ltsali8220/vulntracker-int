@@ -9,6 +9,7 @@ import httpx
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import models
@@ -19,7 +20,7 @@ from config import (
     SHARE_LINK_MAX_PASSWORD_ATTEMPTS,
     SHARE_LINK_TTL_HOURS,
 )
-from database import engine, get_db, search_scans_by_query
+from database import engine, get_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -254,8 +255,26 @@ def search_scans(
 ):
     if not q or len(q) < 2:
         raise HTTPException(status_code=400, detail="Search query must be at least 2 characters")
-    results = search_scans_by_query(db, q)
-    return {"results": results, "count": len(results)}
+    if len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search query must be at most 200 characters")
+    # Bound parameters via the ORM (no string-built SQL). LIKE wildcards in the
+    # user's input are escaped so they match literally.
+    escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    results = (
+        db.query(models.ScanResult)
+        .filter(
+            models.ScanResult.owner_id == current_user.id,
+            or_(
+                models.ScanResult.title.like(pattern, escape="\\"),
+                models.ScanResult.description.like(pattern, escape="\\"),
+                models.ScanResult.cve_id.like(pattern, escape="\\"),
+            ),
+        )
+        .limit(100)
+        .all()
+    )
+    return {"results": [ScanOut.model_validate(r) for r in results], "count": len(results)}
 
 
 @app.get("/scans/{scan_id}", response_model=ScanOut)

@@ -116,15 +116,51 @@ def test_list_scans():
 
 
 def test_search_scans():
-    # TODO: add assertions for search results
     token = register_and_login()
     client.post("/scans", json={
         "title": "SQL Injection via login",
         "severity": "critical",
         "affected_component": "POST /auth/login",
     }, headers=auth_headers(token))
+    client.post("/scans", json={
+        "title": "Unrelated finding",
+        "severity": "low",
+        "affected_component": "misc",
+    }, headers=auth_headers(token))
     resp = client.get("/scans/search?q=SQL", headers=auth_headers(token))
     assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+    assert resp.json()["results"][0]["title"] == "SQL Injection via login"
+
+
+def test_search_sql_injection_payload_is_inert():
+    token = register_and_login()
+    client.post("/scans", json={"title": "Mine", "severity": "low", "affected_component": "x"},
+                headers=auth_headers(token))
+    payload = "zz' UNION SELECT id,username,hashed_password,email,1,1,1,1,1 FROM users--"
+    resp = client.get("/scans/search", params={"q": payload}, headers=auth_headers(token))
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0
+    # A quote must not break the query (previously a 500 with the SQL echoed back)
+    resp = client.get("/scans/search", params={"q": "a'"}, headers=auth_headers(token))
+    assert resp.status_code == 200
+
+
+def test_search_only_returns_own_scans():
+    alice = register_and_login()
+    client.post("/scans", json={"title": "Alice secret finding", "severity": "high", "affected_component": "x"},
+                headers=auth_headers(alice))
+    bob = register_and_login("bob", "bob@example.com")
+    resp = client.get("/scans/search", params={"q": "secret"}, headers=auth_headers(bob))
+    assert resp.json()["count"] == 0
+
+
+def test_search_wildcards_match_literally():
+    token = register_and_login()
+    client.post("/scans", json={"title": "Plain title", "severity": "low", "affected_component": "x"},
+                headers=auth_headers(token))
+    resp = client.get("/scans/search", params={"q": "%%"}, headers=auth_headers(token))
+    assert resp.json()["count"] == 0
 
 
 def test_update_scan_status():
