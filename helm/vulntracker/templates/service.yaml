@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "vulntracker.fullname" . }}
+  namespace: {{ include "vulntracker.namespace" . }}
   labels:
     {{- include "vulntracker.labels" . | nindent 4 }}
 spec:

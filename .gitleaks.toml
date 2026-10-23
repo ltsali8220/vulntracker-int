@@ -1,0 +1,11 @@
+# Extend gitleaks' default rules; skip generated or third-party content
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local environments, dependencies and scan output"
+paths = [
+  '''(^|/)\.venv/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)reports/''',
+]

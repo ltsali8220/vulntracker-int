@@ -23,10 +23,11 @@ app.kubernetes.io/name: {{ include "vulntracker.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
+{{/* Images are deployed by immutable digest only; a mutable tag can be re-pointed */}}
 {{- define "vulntracker.image" -}}
-{{- if .Values.image.digest }}
-{{- printf "%s@%s" .Values.image.repository .Values.image.digest }}
-{{- else }}
-{{- printf "%s:%s" .Values.image.repository .Values.image.tag }}
+{{- printf "%s@%s" .Values.image.repository (required "image.digest is required (sha256:...)" .Values.image.digest) }}
 {{- end }}
+
+{{- define "vulntracker.namespace" -}}
+{{- default .Release.Namespace .Values.namespace }}
 {{- end }}

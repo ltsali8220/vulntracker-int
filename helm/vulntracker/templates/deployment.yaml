@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "vulntracker.fullname" . }}
+  namespace: {{ include "vulntracker.namespace" . }}
   labels:
     {{- include "vulntracker.labels" . | nindent 4 }}
 spec:

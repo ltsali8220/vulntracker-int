@@ -2,11 +2,16 @@
 # Scale out only after moving to a managed database (see docs/remediation-plan.md).
 replicaCount: 1
 
+# Dedicated namespace (never "default"); create it with Pod Security Admission
+# labels, e.g. pod-security.kubernetes.io/enforce=restricted
+namespace: vulntracker
+
 image:
   repository: ghcr.io/example/vulntracker-api
-  # Deploy by immutable digest in production; tag is used only if digest is empty
-  digest: ""
-  tag: "1.0.0"
+  # Immutable digest of the image built and scanned by CI. The chart refuses to
+  # render without one. Override per release: --set image.digest=sha256:...
+  # (Placeholder: the local build's image ID; replace with the registry digest.)
+  digest: "sha256:9c808a86fb9cc91f893cda20b6118ad40579528073c4a85f22ceeb90c525e9f3"
   pullPolicy: Always
 
 nameOverride: ""

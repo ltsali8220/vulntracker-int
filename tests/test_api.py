@@ -364,7 +364,7 @@ def test_token_signed_with_old_hardcoded_key_rejected():
     import jwt as pyjwt
     register_and_login()
     forged = pyjwt.encode({"sub": "alice", "exp": int(time.time()) + 600},
-                          "v3ry-s3cr3t-jwt-k3y-do-not-share", algorithm="HS256")
+                          "v3ry-s3cr3t-jwt-k3y-do-not-share", algorithm="HS256")  # gitleaks:allow (revoked key, regression test)
     resp = client.get("/scans", headers=auth_headers(forged))
     assert resp.status_code == 401
 
@@ -409,7 +409,7 @@ def test_login_never_logs_password(caplog):
                                         "password": "Correct-Horse-9"})
     with caplog.at_level(logging.DEBUG):
         client.post("/auth/login", json={"username": "carol", "password": "Correct-Horse-9"})
-        client.post("/auth/login", json={"username": "carol", "password": "Wrong-Guess-123"})
+        client.post("/auth/login", json={"username": "carol", "password": "Wrong-Guess-123"})  # gitleaks:allow
     assert "Correct-Horse-9" not in caplog.text
     assert "Wrong-Guess-123" not in caplog.text
 

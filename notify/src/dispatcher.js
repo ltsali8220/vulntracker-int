@@ -8,7 +8,7 @@ async function dispatch(webhook, payload) {
         timeout: config.TIMEOUT_MS,
         headers: {
           'Content-Type': 'application/json',
-          'X-Service-Key': config.SERVICE_KEY,
+          ...(config.SERVICE_KEY && { 'X-Service-Key': config.SERVICE_KEY }),
         },
       });
       return { webhookId: webhook.id, success: true, attempt };
