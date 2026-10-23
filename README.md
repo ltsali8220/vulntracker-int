@@ -34,6 +34,17 @@ cd app
 uvicorn main:app --reload
 ```
 
+On Windows (PowerShell):
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+$env:SECRET_KEY = python -c "import secrets; print(secrets.token_urlsafe(48))"
+cd app
+uvicorn main:app --reload
+```
+
 API at `http://localhost:8000`, docs at `http://localhost:8000/docs`.
 
 Tests (from the repo root): `pytest tests/ -v`

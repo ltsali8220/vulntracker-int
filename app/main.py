@@ -28,6 +28,13 @@ from database import engine, get_db
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Log redaction for share links
+# A share token works like a password for GET /share/{token}, and the spec puts
+# the optional link password in the query string. Uvicorn logs the full URL of
+# every request, so without this filter both would end up in the logs.
+# ---------------------------------------------------------------------------
+
 _SHARE_TOKEN_RE = re.compile(r"(/share/)[^/?\s\"]+")
 _PASSWORD_PARAM_RE = re.compile(r"([?&]password=)[^&\s\"]*", re.IGNORECASE)
 
@@ -76,6 +83,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    """Add basic browser security headers to every response."""
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -291,6 +299,7 @@ def search_scans(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    """Search the caller's own scans by title, description or CVE id."""
     if not q or len(q) < 2:
         raise HTTPException(status_code=400, detail="Search query must be at least 2 characters")
     if len(q) > 200:
@@ -321,6 +330,7 @@ def get_scan(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    """Return one scan. Scans owned by other users are reported as not found."""
     scan = db.query(models.ScanResult).filter(
         models.ScanResult.id == scan_id,
         models.ScanResult.owner_id == current_user.id,
@@ -398,6 +408,11 @@ def create_share_link(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    """Create a public link to one of your scans.
+
+    The link expires after 24 hours. An optional password (8+ characters) can be
+    set; the link then locks after 5 wrong attempts.
+    """
     # Only the scan owner may share it; 404 (not 403) avoids confirming the scan exists
     scan = db.query(models.ScanResult).filter(
         models.ScanResult.id == scan_id,
@@ -434,6 +449,11 @@ def get_shared_scan(
     x_share_password: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
+    """Public endpoint: return a shared scan if the link is valid and not expired.
+
+    For password-protected links send the password in the X-Share-Password
+    header (preferred) or the ?password= query parameter.
+    """
     # The X-Share-Password header is preferred: unlike the ?password= query
     # parameter (kept because the spec requires it) it is not recorded in
     # browser history or proxy logs. Access-log redaction covers the query form.

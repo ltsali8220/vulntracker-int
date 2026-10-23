@@ -17,6 +17,40 @@ Each fix is a separate commit with a test that fails on the old code.
 | F-14, F-16, F-20 | Medium / Low | CORS allow-list without credentials; password ≥ 8 chars and ≤ 72 bytes; page size ≤ 100; `nosniff` / `X-Frame-Options` headers | *Harden CORS...* | tests in "Hardening" section |
 | F-12, F-25, notify `SERVICE_KEY` | High / Low | Base image switched to patched, digest-pinned `python:3.11-slim-trixie` (0 critical, 0 fixable); pip/setuptools removed from runtime; Helm namespace + digest-only images; notify key from env | *Harden container base image...* | `reports/post-remediation/container.trivy.json`, `iac.checkov.json` (96 passed, 0 failed) |
 
+### How to verify the fixes yourself
+
+Start the container first (see README → Docker), activate the project venv (so `python` has PyJWT), then run these from a bash shell (Git Bash works on Windows). Each command shows the old behaviour and the expected result now.
+
+```bash
+B=http://localhost:8000
+
+# Create a user and get a token
+curl -s -X POST $B/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"demo","email":"demo@example.com","password":"DemoPass123"}'
+TOKEN=$(curl -s -X POST $B/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"demo","password":"DemoPass123"}' | python -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# F-01: a token signed with the OLD hard-coded key
+# before: 200 (logged in as anyone)   now: 401
+OLD=$(python -c "import jwt,time;print(jwt.encode({'sub':'demo','exp':int(time.time())+600},'v3ry-s3cr3t-jwt-k3y-do-not-share',algorithm='HS256'))")
+curl -s -o /dev/null -w '%{http_code}\n' $B/scans -H "Authorization: Bearer $OLD"
+
+# F-02: SQL injection in search
+# before: returned the users table with password hashes   now: {"results":[],"count":0}
+curl -s -G $B/scans/search -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "q=zz' UNION SELECT id,username,hashed_password,email,1,1,1,1,1 FROM users--"
+
+# F-13: error leak
+# before: 500 with the raw SQL statement   now: 200, empty result
+curl -s -G $B/scans/search -H "Authorization: Bearer $TOKEN" --data-urlencode "q=a'"
+
+# F-05 / F-06: nothing secret in the logs
+# before: passwords and share tokens visible   now: 0
+docker logs vulntracker 2>&1 | grep -c "DemoPass123"
+```
+
+All of the above are also covered by the automated tests: `pytest tests/ -v`.
+
 ## 2. What was not fixed, and why
 
 ### R1: Secrets in git history (F-10): **must be done before any real deployment**
