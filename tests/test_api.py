@@ -7,6 +7,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+# The app refuses to start without a signing key; tests use a throwaway one
+os.environ.setdefault("SECRET_KEY", "test-only-signing-key-" + "x" * 32)
 
 from database import Base, get_db  # noqa: E402
 from main import app  # noqa: E402
@@ -293,3 +295,41 @@ def test_share_link_removed_with_scan():
     path = share_path(client.post(f"/scans/{scan_id}/share", headers=auth_headers(token)).json()["share_url"])
     client.delete(f"/scans/{scan_id}", headers=auth_headers(token))
     assert client.get(path).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Authentication hardening
+# ---------------------------------------------------------------------------
+
+import base64  # noqa: E402
+import json  # noqa: E402
+import time  # noqa: E402
+
+
+def _b64(d):
+    return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+
+
+def test_unsigned_alg_none_token_rejected():
+    register_and_login()
+    forged = _b64({"alg": "none", "typ": "JWT"}) + "." + _b64({"sub": "alice", "exp": int(time.time()) + 600}) + "."
+    resp = client.get("/scans", headers=auth_headers(forged))
+    assert resp.status_code == 401
+
+
+def test_token_signed_with_old_hardcoded_key_rejected():
+    import jwt as pyjwt
+    register_and_login()
+    forged = pyjwt.encode({"sub": "alice", "exp": int(time.time()) + 600},
+                          "v3ry-s3cr3t-jwt-k3y-do-not-share", algorithm="HS256")
+    resp = client.get("/scans", headers=auth_headers(forged))
+    assert resp.status_code == 401
+
+
+def test_token_without_exp_rejected():
+    import jwt as pyjwt
+    from config import SECRET_KEY
+    register_and_login()
+    forged = pyjwt.encode({"sub": "alice"}, SECRET_KEY, algorithm="HS256")
+    resp = client.get("/scans", headers=auth_headers(forged))
+    assert resp.status_code == 401

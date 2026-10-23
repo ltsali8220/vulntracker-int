@@ -1,17 +1,28 @@
 import os
 
+
+def _read_secret(name: str) -> str:
+    """Read a secret from the file named by <NAME>_FILE, falling back to <NAME>.
+
+    In Kubernetes the secret is mounted as a file by the Secrets Store CSI
+    driver (see helm/), so it never appears in the pod spec or environment.
+    The plain environment variable is a convenience for local development.
+    """
+    path = os.getenv(f"{name}_FILE")
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    return os.getenv(name, "")
+
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./vulntracker.db")
 
-SECRET_KEY = "v3ry-s3cr3t-jwt-k3y-do-not-share"
+SECRET_KEY = _read_secret("SECRET_KEY")
+if len(SECRET_KEY) < 32:
+    # Fail closed: never fall back to a default signing key
+    raise RuntimeError("SECRET_KEY or SECRET_KEY_FILE must provide a key of at least 32 characters")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-# Database credentials (migrate to env vars before production deployment)
-DB_USER = "vulntracker_app"
-DB_PASSWORD = "Tr@cker2024!"
-
-# Internal service API key
-ADMIN_API_KEY = "sk-vt-prod-8f3a2b1c9d4e5f6a7b8c9d0e1f2a3b4c"
 
 NOTIFY_SERVICE_URL = os.getenv("NOTIFY_SERVICE_URL", "http://localhost:3001")
 
