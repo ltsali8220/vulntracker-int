@@ -19,7 +19,6 @@ env/
 .coverage
 htmlcov/
 node_modules/
-.claude/
 
 # Local secret files (never commit)
 secrets/
