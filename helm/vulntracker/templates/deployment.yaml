@@ -39,7 +39,7 @@ spec:
             # Non-secret configuration only. The JWT key is read from a file
             # path, never passed as an environment variable.
             - name: SECRET_KEY_FILE
-              value: {{ printf "%s/%s" .Values.secrets.mountPath (index .Values.secrets.objects 0).fileName | quote }}
+              value: {{ printf "%s/%s" .Values.secrets.mountPath .Values.secrets.fileName | quote }}
             - name: SHARE_BASE_URL
               value: {{ .Values.config.shareBaseUrl | quote }}
             - name: NOTIFY_SERVICE_URL

@@ -23,21 +23,40 @@ config:
   notifyServiceUrl: "http://vulntracker-notify:3001"
   corsAllowedOrigins: "https://vulntracker.example.com"
 
-# Secrets are fetched at pod start by the Secrets Store CSI driver from AWS
-# Secrets Manager and mounted as read-only files. They never appear in this
-# chart, in a Kubernetes Secret object, or in environment variables.
+# Secrets are fetched at pod start by the Secrets Store CSI driver and mounted
+# as read-only files. They never appear in this chart, in a Kubernetes Secret
+# object, or in environment variables. The app reads the file named by
+# SECRET_KEY_FILE.
 secrets:
-  provider: aws
+  # "vault" = on-prem HashiCorp Vault (default), "aws" = AWS Secrets Manager
+  provider: vault
   mountPath: /mnt/secrets
-  # Name of the secret in AWS Secrets Manager, and the JSON key inside it
-  awsSecretName: "prod/vulntracker/api"
-  objects:
-    - jmesPath: jwt_secret_key
-      fileName: jwt_secret_key
+  fileName: jwt_secret_key
 
-serviceAccount:
-  # IAM role (IRSA) allowed secretsmanager:GetSecretValue on the secret above only
-  roleArn: "arn:aws:iam::123456789012:role/vulntracker-api-secrets-read"
+  vault:
+    # Vault server address as seen from the cluster nodes (the CSI provider
+    # runs on each node and talks to Vault; the app pod never does)
+    address: "https://vault.internal.example.com:8200"
+    # Vault Kubernetes-auth role bound to this chart's service account and
+    # namespace, with a read-only policy on secretPath
+    role: vulntracker-api
+    kubernetesMountPath: kubernetes
+    # Audience of the service-account token sent to Vault; must match the
+    # role's "audience" so a token issued for anything else is rejected
+    audience: vault
+    # KV version 2 path (note the /data/ segment) and the key inside it
+    secretPath: "secret/data/vulntracker/api"
+    secretKey: jwt_secret_key
+    # Path (on the node) of the CA that signed Vault's TLS certificate; empty
+    # uses the system trust store
+    caCertPath: ""
+
+  aws:
+    # Secret name in AWS Secrets Manager and the JSON key inside it
+    secretName: "prod/vulntracker/api"
+    jmesPath: jwt_secret_key
+    # IAM role (IRSA) allowed secretsmanager:GetSecretValue on that secret only
+    roleArn: "arn:aws:iam::123456789012:role/vulntracker-api-secrets-read"
 
 service:
   type: ClusterIP

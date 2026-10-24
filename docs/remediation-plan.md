@@ -58,7 +58,7 @@ All of the above are also covered by the automated tests: `pytest tests/ -v`.
 * **Residual risk:** The old JWT key, `DB_PASSWORD`, `ADMIN_API_KEY` and notify `SERVICE_KEY` are in the commit history of this repository and every clone or fork. If any of them is (or was) used in a real environment, that environment is compromised. The code no longer accepts the old JWT key, but other systems might.
 * **Why not done here:** Rotation needs access to the systems that use those credentials (not available in the take-home). Rewriting history (`git filter-repo`) breaks every existing clone and, for this assignment, would hide the starting point from reviewers. History rewrite also does **not** un-leak a secret, so rotation is the real fix.
 * **Effort:** Rotation ≈ 1-2 hours per credential once owners are identified. Optional history purge ≈ 1 hour + coordinating re-clones.
-* **Compensating controls now:** New JWT key is generated per environment and stored only in AWS Secrets Manager; app fails closed without it; gitleaks runs in CI to stop new secrets landing.
+* **Compensating controls now:** New JWT key is generated per environment and stored only in HashiCorp Vault (read by the pod through Kubernetes auth, see `docs/vault-setup.md`); app fails closed without it; gitleaks runs in CI to stop new secrets landing.
 
 ### R2: Notify service has no authentication; SSRF via webhook URLs (F-09, F-19, F-24)
 

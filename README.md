@@ -10,7 +10,7 @@ The original assignment brief is in [`docs/ASSIGNMENT.md`](docs/ASSIGNMENT.md).
 | Task 2: Scan reports | [`reports/`](reports/) (baseline) and [`reports/post-remediation/`](reports/post-remediation/) |
 | Task 2: Prioritised findings | [`docs/findings.md`](docs/findings.md) |
 | Task 3: Fixes | one commit per fix (see `git log`), [`docs/remediation-plan.md`](docs/remediation-plan.md) |
-| Task 4: Container + deployment | [`Dockerfile`](Dockerfile), [`helm/vulntracker/`](helm/vulntracker/) |
+| Task 4: Container + deployment | [`Dockerfile`](Dockerfile), [`helm/vulntracker/`](helm/vulntracker/), [`docs/vault-setup.md`](docs/vault-setup.md) |
 | Task 5: Executive summary | [`docs/executive-summary.md`](docs/executive-summary.md) |
 | CI security gates | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 
@@ -98,27 +98,26 @@ Image properties: multi-stage build; digest-pinned `python:3.11-slim-trixie` bas
 
 ## Kubernetes (Helm)
 
-Prerequisites in the cluster: an NGINX ingress controller, the [Secrets Store CSI driver](https://secrets-store-csi-driver.sigs.k8s.io/) with the AWS provider, a NetworkPolicy-enforcing CNI, and an IAM role (IRSA) allowed to read only the app's secret.
+Secrets come from **on-prem HashiCorp Vault** (default) through the Secrets Store CSI driver and the Vault CSI provider; AWS Secrets Manager is supported with `--set secrets.provider=aws`. Full Vault setup, design reasons and the local end-to-end test are in [`docs/vault-setup.md`](docs/vault-setup.md).
+
+Prerequisites in the cluster: an NGINX ingress controller, the Secrets Store CSI driver with the Vault provider, a NetworkPolicy-enforcing CNI, and a Vault Kubernetes-auth role for the app's service account.
 
 ```bash
-# 1. Store the key in AWS Secrets Manager (never in the chart)
-aws secretsmanager create-secret --name prod/vulntracker/api \
-  --secret-string "{\"jwt_secret_key\":\"$(python -c 'import secrets;print(secrets.token_urlsafe(48))')\"}"
+# 1. Store the key in Vault (never in the chart)
+vault kv put secret/vulntracker/api jwt_secret_key="$(openssl rand -base64 48)"
+#    + read-only policy and Kubernetes-auth role: see docs/vault-setup.md
 
 # 2. Namespace with Pod Security "restricted"
 kubectl create namespace vulntracker
 kubectl label namespace vulntracker pod-security.kubernetes.io/enforce=restricted
 
 # 3. Deploy by image digest (the chart refuses to render without one)
-helm upgrade --install vulntracker helm/vulntracker -n vulntracker \
-  --set image.repository=<registry>/vulntracker-api \
-  --set image.digest=sha256:<digest-from-ci> \
-  --set serviceAccount.roleArn=arn:aws:iam::<acct>:role/vulntracker-api-secrets-read
+helm upgrade --install vulntracker helm/vulntracker -n vulntracker   --set image.repository=<registry>/vulntracker-api   --set image.digest=sha256:<digest-from-ci>   --set secrets.vault.address=https://vault.internal.example.com:8200
 ```
 
 What the chart enforces:
 
-* **Secrets from a secrets manager:** `SecretProviderClass` mounts the key from AWS Secrets Manager as a read-only file at `/mnt/secrets`. It is not in the chart, not a Kubernetes `Secret` object, and not an environment variable; the app reads it via `SECRET_KEY_FILE`.
+* **Secrets from a secrets manager:** `SecretProviderClass` mounts the key from Vault as a read-only file at `/mnt/secrets`. The pod authenticates with its own short-lived, audience-bound service-account token (Vault Kubernetes auth), so there is no static Vault token anywhere. The key is not in the chart, not a Kubernetes `Secret` object, and not an environment variable; the app reads it via `SECRET_KEY_FILE`. **Tested end to end on a local kind cluster with an external Vault 2.0.3** (results in `docs/vault-setup.md`).
 * **Restricted network access:** `ClusterIP` service, external access only through a TLS ingress with rate limits; `NetworkPolicy` allows ingress **only from the ingress controller** on port 8000, and egress only to DNS and the notify service.
 * **Resource limits and security contexts:** CPU/memory requests and limits; `runAsNonRoot`, uid 65532, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, all capabilities dropped, seccomp `RuntimeDefault`; service-account token not mounted; image by digest; dedicated namespace.
 
@@ -159,4 +158,4 @@ Tool choices and how findings were prioritised are explained in [`docs/findings.
 
 * Notify is internal-only; its redesign is deferred (documented in the remediation plan), but its vulnerable dependencies and hard-coded key were fixed.
 * SQLite is kept for the prototype; the chart therefore runs a single replica.
-* AWS (Secrets Manager + IRSA) is used as the example cloud; the chart's `secrets.provider` can be switched to Vault/Azure/GCP CSI providers.
+* Secrets are in an on-prem HashiCorp Vault; the chart can switch to AWS Secrets Manager (`secrets.provider=aws`), and other CSI providers (Azure, GCP) would need only a new `SecretProviderClass` branch.
